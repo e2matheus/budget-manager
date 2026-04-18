@@ -17,11 +17,18 @@ const defaultState = {
   },
   transfers: [] as unknown[],
   movements: [] as unknown[],
-  scenario: {
-    amount: 0,
-    method: "bank",
-    category: "food",
-  },
+  groceryCycles: [] as unknown[],
+  tasks: [] as unknown[],
+  ledgerOrder: [] as unknown[],
+  scenarios: [
+    {
+      id: "default-scenario-1",
+      name: "Scenario 1",
+      amount: 0,
+      method: "bank",
+      category: "food",
+    },
+  ],
 };
 
 const app = express();

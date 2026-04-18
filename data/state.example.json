@@ -6,9 +6,18 @@
   },
   "transfers": [],
   "movements": [],
-  "scenario": {
-    "amount": 0,
-    "method": "bank",
-    "category": "food"
-  }
+  "groceryCycles": [],
+  "tasks": [],
+  "ledgerOrder": [],
+  "scenarios": [
+    {
+      "id": "default-scenario-1",
+      "name": "Estimation A",
+      "amount": 0,
+      "method": "bank",
+      "category": "food",
+      "purchaseDate": "2026-04-18",
+      "notes": ""
+    }
+  ]
 }

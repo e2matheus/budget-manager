@@ -58,7 +58,30 @@ export function deriveBalances(state: AppState): DerivedBalances {
   };
 }
 
-/** Project balances after a hypothetical one-off expense (inputs may live in `state.scenario` on disk). */
+/** Sum of food movements linked to a grocery cycle (multiple lines per run). */
+export function sumFoodSpendForCycle(
+  state: AppState,
+  cycleId: string
+): number {
+  return state.movements
+    .filter(
+      (m) =>
+        m.category === "food" && m.groceryCycleId === cycleId
+    )
+    .reduce((s, m) => s + m.amount, 0);
+}
+
+/** How many food movements are linked to this grocery run (ledger lines). */
+export function countFoodMovementsForCycle(
+  state: AppState,
+  cycleId: string
+): number {
+  return state.movements.filter(
+    (m) => m.category === "food" && m.groceryCycleId === cycleId
+  ).length;
+}
+
+/** Project balances after a hypothetical one-off expense (from a scenario row). */
 export function projectAfterExpense(
   state: AppState,
   expense: {
