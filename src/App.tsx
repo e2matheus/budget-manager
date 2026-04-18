@@ -8,22 +8,104 @@ import {
 } from "react";
 import "./App.css";
 import { fetchState, saveState } from "./api";
-import { deriveBalances, projectAfterExpense } from "./derive";
 import {
-  defaultScenarioInputs,
-  type Allocation,
+  countFoodMovementsForCycle,
+  deriveBalances,
+  sumFoodSpendForCycle,
+} from "./derive";
+import { migrateMovementRow, migrateTransferRow } from "./ledgerMigrate";
+import {
+  getLastRemainingForGroceryCycle,
+  reconcileLedgerOrder,
+} from "./ledgerOrder";
+import { MovementsLedgerTable } from "./MovementsLedger";
+import { ensureScenarioRow } from "./scenarioEnsure";
+import { ScenariosPanel } from "./ScenariosPanel";
+import {
   type AppState,
-  type FoodSubcategory,
+  type AppStateLoaded,
+  type GroceryCycle,
   type Movement,
-  type ScenarioInputs,
+  type ScenarioRow,
+  type TaskDef,
   type Transfer,
 } from "./types";
-import { formatMoney, newId, parseNumber } from "./util";
+import {
+  formatAmountField,
+  formatMoney,
+  newId,
+  parseNumber,
+} from "./util";
 
-function normalizeState(raw: AppState): AppState {
+
+function normalizeState(raw: AppStateLoaded): AppState {
+  const legacy = raw.scenario;
+  const groceryCycles: GroceryCycle[] = (raw.groceryCycles ?? []).map((c) => ({
+    id: c.id && c.id.length > 0 ? c.id : newId(),
+    label: c.label ?? "",
+    anchorDate:
+      c.anchorDate ?? new Date().toISOString().slice(0, 10),
+    memo: c.memo,
+  }));
+
+  const rawScenarios = raw.scenarios ?? [];
+
+  let scenarios: ScenarioRow[];
+  if (rawScenarios.length > 0) {
+    scenarios = rawScenarios.map((s) => ensureScenarioRow(s));
+  } else if (legacy) {
+    scenarios = [
+      ensureScenarioRow({
+        id: "migrated-scenario",
+        name: "Scenario 1",
+        ...legacy,
+      }),
+    ];
+  } else {
+    scenarios = [ensureScenarioRow({ id: newId(), name: "Scenario 1" })];
+  }
+
+  const movements = (raw.movements ?? []).map((m) => {
+    const next = migrateMovementRow(
+      m as Movement & { myCash?: number; hisCash?: number; hisBank?: number }
+    );
+    if (next.category !== "food") {
+      next.foodSubcategory = undefined;
+    }
+    return next;
+  });
+
+  const transfers = (raw.transfers ?? []).map((t) =>
+    migrateTransferRow(
+      t as Transfer & { myCash?: number; hisCash?: number; hisBank?: number }
+    )
+  );
+
+  const ledgerOrder = reconcileLedgerOrder(
+    transfers,
+    movements,
+    raw.ledgerOrder
+  );
+
+  const tasks: TaskDef[] = (raw.tasks ?? []).map((t) => ({
+    id: t.id && t.id.length > 0 ? t.id : newId(),
+    name: t.name ?? "",
+    memo: t.memo,
+  }));
+
+  const m = raw.meta;
   return {
-    ...raw,
-    scenario: { ...defaultScenarioInputs(), ...raw.scenario },
+    meta: {
+      currency: m?.currency ?? "EUR",
+      openingBank: m?.openingBank ?? 0,
+      openingCash: m?.openingCash ?? 0,
+    },
+    transfers,
+    movements,
+    groceryCycles,
+    tasks,
+    scenarios,
+    ledgerOrder,
   };
 }
 
@@ -31,7 +113,10 @@ const emptyState = (): AppState => ({
   meta: { currency: "EUR", openingBank: 0, openingCash: 0 },
   transfers: [],
   movements: [],
-  scenario: defaultScenarioInputs(),
+  groceryCycles: [],
+  tasks: [],
+  scenarios: [ensureScenarioRow({ id: newId(), name: "Scenario 1" })],
+  ledgerOrder: [],
 });
 
 export function App() {
@@ -46,12 +131,15 @@ export function App() {
       try {
         const s = await fetchState();
         if (!cancelled) {
-          setState(normalizeState(s));
+          setState(normalizeState(s as AppStateLoaded));
           setLoadError(null);
         }
       } catch (e) {
         if (!cancelled) {
-          setLoadError(e instanceof Error ? e.message : "Failed to load");
+          const msg = e instanceof Error ? e.message : "Failed to load";
+          setLoadError(
+            `${msg} — tip: run yarn dev so the API can read data/state.json`
+          );
           setState(emptyState());
         }
       }
@@ -165,16 +253,19 @@ export function App() {
             </div>
           </div>
 
-          <TransfersTable state={state} setState={setState} />
+          <GroceryCyclesSection state={state} setState={setState} />
 
-          <MovementsTable state={state} setState={setState} />
+          <TasksSection state={state} setState={setState} />
 
-          <ScenarioPanel state={state} setState={setState} />
+          <MovementsLedgerTable state={state} setState={setState} />
+
+          <ScenariosPanel state={state} setState={setState} />
         </div>
       </div>
     </div>
   );
 }
+
 
 function MetaSection({
   state,
@@ -209,7 +300,7 @@ function MetaSection({
           <input
             id="open-bank"
             inputMode="decimal"
-            value={String(state.meta.openingBank)}
+            value={formatAmountField(state.meta.openingBank)}
             onChange={(e) =>
               setState((s) =>
                 s
@@ -230,7 +321,7 @@ function MetaSection({
           <input
             id="open-cash"
             inputMode="decimal"
-            value={String(state.meta.openingCash)}
+            value={formatAmountField(state.meta.openingCash)}
             onChange={(e) =>
               setState((s) =>
                 s
@@ -249,312 +340,94 @@ function MetaSection({
       </div>
       <p className="muted" style={{ padding: "0 0.5rem 0.5rem" }}>
         Transfers increase bank/cash (optional split). Movements record spending. Food
-        remainder = food-tagged transfers minus food movements.
+        remainder = food-tagged transfers minus food movements. Grocery runs group
+        multiple food lines (e.g. each ~2 weeks from first in-person shop).
       </p>
     </div>
   );
 }
 
-function TransfersTable({
+function TasksSection({
   state,
   setState,
 }: {
   state: AppState;
   setState: Dispatch<SetStateAction<AppState | null>>;
 }) {
-  const update = (id: string, patch: Partial<Transfer>) => {
+  const add = () => {
+    const t: TaskDef = { id: newId(), name: "" };
+    setState((s) => (s ? { ...s, tasks: [t, ...s.tasks] } : s));
+  };
+
+  const update = (id: string, patch: Partial<TaskDef>) => {
     setState((s) => {
       if (!s) return s;
       return {
         ...s,
+        tasks: s.tasks.map((x) => (x.id === id ? { ...x, ...patch } : x)),
+      };
+    });
+  };
+
+  const remove = (id: string) => {
+    setState((s) => {
+      if (!s) return s;
+      return {
+        ...s,
+        tasks: s.tasks.filter((t) => t.id !== id),
         transfers: s.transfers.map((t) =>
-          t.id === id ? { ...t, ...patch } : t
+          t.taskDefId === id ? { ...t, taskDefId: undefined } : t
         ),
-      };
-    });
-  };
-
-  const remove = (id: string) => {
-    setState((s) =>
-      s ? { ...s, transfers: s.transfers.filter((t) => t.id !== id) } : s
-    );
-  };
-
-  const add = () => {
-    const t: Transfer = {
-      id: newId(),
-      date: new Date().toISOString().slice(0, 10),
-      amount: 0,
-      concept: "",
-      allocation: "food",
-    };
-    setState((s) => (s ? { ...s, transfers: [t, ...s.transfers] } : s));
-  };
-
-  return (
-    <div className="sheet-block">
-      <div className="sheet-block-header">Transfers (in)</div>
-      <div className="sheet-table-wrap">
-        <table className="sheet-table">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Amount</th>
-              <th>Concept</th>
-              <th>Allocation</th>
-              <th>Bank (split)</th>
-              <th>Cash (split)</th>
-              <th className="cell-actions"> </th>
-            </tr>
-          </thead>
-          <tbody>
-            {state.transfers.map((t) => {
-              return (
-                <tr key={t.id}>
-                  <td>
-                    <input
-                      type="date"
-                      value={t.date}
-                      onChange={(e) => update(t.id, { date: e.target.value })}
-                    />
-                  </td>
-                  <td className="cell-num">
-                    <input
-                      inputMode="decimal"
-                      value={String(t.amount)}
-                      onChange={(e) =>
-                        update(t.id, { amount: parseNumber(e.target.value) })
-                      }
-                    />
-                  </td>
-                  <td>
-                    <input
-                      value={t.concept}
-                      onChange={(e) =>
-                        update(t.id, { concept: e.target.value })
-                      }
-                    />
-                  </td>
-                  <td>
-                    <select
-                      value={t.allocation}
-                      onChange={(e) =>
-                        update(t.id, {
-                          allocation: e.target.value as Allocation,
-                        })
-                      }
-                    >
-                      <option value="food">Food / groceries</option>
-                      <option value="utilities">Utilities / services</option>
-                      <option value="general">General / other</option>
-                    </select>
-                  </td>
-                  <td className="cell-num">
-                    <input
-                      inputMode="decimal"
-                      value={
-                        t.split ? String(t.split.bank) : ""
-                      }
-                      placeholder="(all bank)"
-                      onChange={(e) => {
-                        const raw = e.target.value.trim();
-                        if (!raw) {
-                          update(t.id, { split: undefined });
-                          return;
-                        }
-                        const bank = parseNumber(raw);
-                        const cash = t.split?.cash ?? 0;
-                        update(t.id, { split: { bank, cash } });
-                      }}
-                    />
-                  </td>
-                  <td className="cell-num">
-                    <input
-                      inputMode="decimal"
-                      value={
-                        t.split ? String(t.split.cash) : ""
-                      }
-                      placeholder="—"
-                      onChange={(e) => {
-                        const raw = e.target.value.trim();
-                        if (!raw && !t.split) return;
-                        if (!raw) {
-                          update(t.id, { split: undefined });
-                          return;
-                        }
-                        const cash = parseNumber(raw);
-                        const bank = t.split?.bank ?? t.amount;
-                        update(t.id, { split: { bank, cash } });
-                      }}
-                    />
-                  </td>
-                  <td className="cell-actions">
-                    <button
-                      type="button"
-                      className="btn"
-                      onClick={() => remove(t.id)}
-                    >
-                      ×
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      {state.transfers.some((t) => {
-        if (!t.split) return false;
-        return Math.abs(t.split.bank + t.split.cash - t.amount) > 0.009;
-      }) && (
-        <div className="hint-warn">
-          Warning: some rows have bank+cash split that does not match the transfer
-          amount.
-        </div>
-      )}
-      <div style={{ padding: "0.45rem", borderTop: "1px solid #e3e3e3" }}>
-        <button type="button" className="btn" onClick={add}>
-          Add transfer
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function MovementsTable({
-  state,
-  setState,
-}: {
-  state: AppState;
-  setState: Dispatch<SetStateAction<AppState | null>>;
-}) {
-  const update = (id: string, patch: Partial<Movement>) => {
-    setState((s) => {
-      if (!s) return s;
-      return {
-        ...s,
         movements: s.movements.map((m) =>
-          m.id === id ? { ...m, ...patch } : m
+          m.taskDefId === id ? { ...m, taskDefId: undefined } : m
+        ),
+        scenarios: s.scenarios.map((sc) =>
+          sc.linkedTaskDefId === id
+            ? { ...sc, linkedTaskDefId: undefined }
+            : sc
         ),
       };
     });
   };
 
-  const remove = (id: string) => {
-    setState((s) =>
-      s ? { ...s, movements: s.movements.filter((m) => m.id !== id) } : s
-    );
-  };
-
-  const add = () => {
-    const m: Movement = {
-      id: newId(),
-      date: new Date().toISOString().slice(0, 10),
-      amount: 0,
-      method: "bank",
-      category: "food",
-      foodSubcategory: "other",
-      memo: "",
-    };
-    setState((s) => (s ? { ...s, movements: [m, ...s.movements] } : s));
-  };
-
   return (
-    <div className="sheet-block">
-      <div className="sheet-block-header">Movements (out)</div>
+    <div className="sheet-block sheet-block--tasks">
+      <div className="sheet-block-header">Tasks</div>
+      <p className="muted" style={{ padding: "0.35rem 0.5rem 0" }}>
+        Named tasks for water, church collection, etc. Link them from Movements (Task
+        column) or from a scenario below. Grocery runs stay in “Food / grocery runs”.
+      </p>
       <div className="sheet-table-wrap">
         <table className="sheet-table">
           <thead>
             <tr>
-              <th>Date</th>
-              <th>Amount</th>
-              <th>Method</th>
-              <th>Category</th>
-              <th>Food detail</th>
+              <th>Name</th>
               <th>Memo</th>
               <th className="cell-actions"> </th>
             </tr>
           </thead>
           <tbody>
-            {state.movements.map((m) => (
-              <tr key={m.id}>
+            {state.tasks.map((t) => (
+              <tr key={t.id}>
                 <td>
                   <input
-                    type="date"
-                    value={m.date}
-                    onChange={(e) => update(m.id, { date: e.target.value })}
-                  />
-                </td>
-                <td className="cell-num">
-                  <input
-                    inputMode="decimal"
-                    value={String(m.amount)}
-                    onChange={(e) =>
-                      update(m.id, { amount: parseNumber(e.target.value) })
-                    }
+                    value={t.name}
+                    placeholder="e.g. Aquaservice Marzo 2026"
+                    onChange={(e) => update(t.id, { name: e.target.value })}
                   />
                 </td>
                 <td>
-                  <select
-                    value={m.method}
-                    onChange={(e) =>
-                      update(m.id, {
-                        method: e.target.value as Movement["method"],
-                      })
-                    }
-                  >
-                    <option value="bank">Bank</option>
-                    <option value="cash">Cash</option>
-                  </select>
-                </td>
-                <td>
-                  <select
-                    value={m.category}
-                    onChange={(e) => {
-                      const category = e.target.value as Movement["category"];
-                      update(m.id, {
-                        category,
-                        foodSubcategory:
-                          category === "food" ? m.foodSubcategory ?? "other" : undefined,
-                      });
-                    }}
-                  >
-                    <option value="food">Food / groceries</option>
-                    <option value="utilities">Utilities / services</option>
-                    <option value="other">Other</option>
-                  </select>
-                </td>
-                <td>
-                  {m.category === "food" ? (
-                    <select
-                      value={m.foodSubcategory ?? "other"}
-                      onChange={(e) =>
-                        update(m.id, {
-                          foodSubcategory: e.target.value as FoodSubcategory,
-                        })
-                      }
-                    >
-                      <option value="online">Supermarket online</option>
-                      <option value="mercadona">Mercadona</option>
-                      <option value="carrefour">Carrefour</option>
-                      <option value="dia">Dia</option>
-                      <option value="other">Other</option>
-                    </select>
-                  ) : (
-                    <span className="muted">—</span>
-                  )}
-                </td>
-                <td>
                   <input
-                    value={m.memo}
-                    onChange={(e) => update(m.id, { memo: e.target.value })}
+                    value={t.memo ?? ""}
+                    placeholder="Optional"
+                    onChange={(e) => update(t.id, { memo: e.target.value || undefined })}
                   />
                 </td>
                 <td className="cell-actions">
                   <button
                     type="button"
                     className="btn"
-                    onClick={() => remove(m.id)}
+                    onClick={() => remove(t.id)}
                   >
                     ×
                   </button>
@@ -566,125 +439,154 @@ function MovementsTable({
       </div>
       <div style={{ padding: "0.45rem", borderTop: "1px solid #e3e3e3" }}>
         <button type="button" className="btn" onClick={add}>
-          Add movement
+          Add task
         </button>
       </div>
     </div>
   );
 }
 
-function ScenarioPanel({
+function GroceryCyclesSection({
   state,
   setState,
 }: {
   state: AppState;
   setState: Dispatch<SetStateAction<AppState | null>>;
 }) {
-  const sc: ScenarioInputs = {
-    ...defaultScenarioInputs(),
-    ...state.scenario,
-  };
-
-  const patchScenario = (patch: Partial<ScenarioInputs>) => {
+  const add = () => {
+    const c: GroceryCycle = {
+      id: newId(),
+      label: "",
+      anchorDate: new Date().toISOString().slice(0, 10),
+      memo: "",
+    };
     setState((s) =>
-      s
-        ? {
-            ...s,
-            scenario: { ...defaultScenarioInputs(), ...s.scenario, ...patch },
-          }
-        : s
+      s ? { ...s, groceryCycles: [c, ...s.groceryCycles] } : s
     );
   };
 
-  const projected = useMemo(
-    () =>
-      projectAfterExpense(state, {
-        amount: sc.amount,
-        method: sc.method,
-        category: sc.category,
-      }),
-    [state, sc.amount, sc.method, sc.category]
-  );
-  const base = useMemo(() => deriveBalances(state), [state]);
+  const update = (id: string, patch: Partial<GroceryCycle>) => {
+    setState((s) => {
+      if (!s) return s;
+      return {
+        ...s,
+        groceryCycles: s.groceryCycles.map((c) =>
+          c.id === id ? { ...c, ...patch } : c
+        ),
+      };
+    });
+  };
 
-  const taskRemaining =
-    sc.category === "food"
-      ? projected.foodRemaining
-      : sc.category === "utilities"
-        ? projected.utilitiesRemaining
-        : projected.generalRemaining;
+  const remove = (id: string) => {
+    setState((s) => {
+      if (!s) return s;
+      return {
+        ...s,
+        groceryCycles: s.groceryCycles.filter((c) => c.id !== id),
+        movements: s.movements.map((m) =>
+          m.groceryCycleId === id ? { ...m, groceryCycleId: undefined } : m
+        ),
+        transfers: s.transfers.map((t) =>
+          t.groceryCycleId === id ? { ...t, groceryCycleId: undefined } : t
+        ),
+      };
+    });
+  };
 
   return (
-    <div className="sheet-block">
+    <div className="sheet-block sheet-block--grocery">
       <div className="sheet-block-header">
-        Scenario — if they spend this next (saved with your backup file)
+        Food / grocery runs (anchor = first in-person purchase day)
       </div>
-      <div className="scenario-grid">
-        <div className="scenario-field">
-          <label htmlFor="sc-amt">Purchase amount</label>
-          <input
-            id="sc-amt"
-            inputMode="decimal"
-            value={String(sc.amount)}
-            onChange={(e) =>
-              patchScenario({ amount: parseNumber(e.target.value) })
-            }
-          />
-        </div>
-        <div className="scenario-field">
-          <label htmlFor="sc-method">Paid from</label>
-          <select
-            id="sc-method"
-            value={sc.method}
-            onChange={(e) =>
-              patchScenario({
-                method: e.target.value as Movement["method"],
-              })
-            }
-          >
-            <option value="bank">Bank</option>
-            <option value="cash">Cash</option>
-          </select>
-        </div>
-        <div className="scenario-field">
-          <label htmlFor="sc-cat">Counts against</label>
-          <select
-            id="sc-cat"
-            value={sc.category}
-            onChange={(e) =>
-              patchScenario({
-                category: e.target.value as Movement["category"],
-              })
-            }
-          >
-            <option value="food">Food / groceries</option>
-            <option value="utilities">Utilities / services</option>
-            <option value="other">Other / general</option>
-          </select>
-        </div>
+      <p className="muted" style={{ padding: "0.35rem 0.5rem 0" }}>
+        Create one row per shopping period. Link food movements below so several
+        purchases (Mercadona, Dia, transport, etc.) roll up to the same run.
+      </p>
+      <div className="sheet-table-wrap">
+        <table className="sheet-table">
+          <thead>
+            <tr>
+              <th>Label</th>
+              <th>First in-person day</th>
+              <th>Memo</th>
+              <th className="cell-num">Last remaining / Σ food (linked)</th>
+              <th className="cell-actions"> </th>
+            </tr>
+          </thead>
+          <tbody>
+            {state.groceryCycles.map((c) => (
+              <tr key={c.id}>
+                <td>
+                  <input
+                    value={c.label}
+                    placeholder="e.g. Compra del 30 de Marzo"
+                    onChange={(e) => update(c.id, { label: e.target.value })}
+                  />
+                </td>
+                <td>
+                  <input
+                    type="date"
+                    value={c.anchorDate}
+                    onChange={(e) =>
+                      update(c.id, { anchorDate: e.target.value })
+                    }
+                  />
+                </td>
+                <td>
+                  <input
+                    value={c.memo ?? ""}
+                    onChange={(e) => update(c.id, { memo: e.target.value })}
+                  />
+                </td>
+                <td className="cell-num">
+                  <div className="grocery-cycle-stats">
+                    {(() => {
+                      const lastRem = getLastRemainingForGroceryCycle(
+                        state,
+                        c.id
+                      );
+                      const sum = sumFoodSpendForCycle(state, c.id);
+                      const n = countFoodMovementsForCycle(state, c.id);
+                      return (
+                        <>
+                          {lastRem != null && Number.isFinite(lastRem) ? (
+                            <div>
+                              <strong>
+                                {formatMoney(lastRem, state.meta.currency)}
+                              </strong>
+                              <span className="muted"> remaining (last line)</span>
+                            </div>
+                          ) : null}
+                          <div className="muted grocery-cycle-roll">
+                            Σ food linked{" "}
+                            {formatMoney(sum, state.meta.currency)} · {n} line
+                            {n !== 1 ? "s" : ""}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </td>
+                <td className="cell-actions">
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => remove(c.id)}
+                  >
+                    ×
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-      <div className="scenario-out">
-        <div>
-          <span className="muted">Projected bank: </span>
-          <strong>{formatMoney(projected.bank, state.meta.currency)}</strong>
-          <span className="muted">
-            {" "}
-            (Δ {formatMoney(projected.bank - base.bank, state.meta.currency)})
-          </span>
-        </div>
-        <div>
-          <span className="muted">Projected cash: </span>
-          <strong>{formatMoney(projected.cash, state.meta.currency)}</strong>
-          <span className="muted">
-            {" "}
-            (Δ {formatMoney(projected.cash - base.cash, state.meta.currency)})
-          </span>
-        </div>
-        <div>
-          <span className="muted">Remaining for chosen task: </span>
-          <strong>{formatMoney(taskRemaining, state.meta.currency)}</strong>
-        </div>
+      <div style={{ padding: "0.45rem", borderTop: "1px solid #e3e3e3" }}>
+        <button type="button" className="btn" onClick={add}>
+          Add grocery run
+        </button>
       </div>
     </div>
   );
 }
+
