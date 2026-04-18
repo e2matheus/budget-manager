@@ -1,0 +1,13 @@
+node_modules
+dist
+dist-server
+.DS_Store
+*.log
+.env
+.env.local
+
+# Local session notes and agent history (not for sharing)
+.history/
+
+# Sensitive local budget data — create from state.example.json after clone
+data/state.json

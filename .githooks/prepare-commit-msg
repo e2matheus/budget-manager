@@ -1,0 +1,31 @@
+#!/usr/bin/env sh
+# Appends GitHub-style Cursor co-author trailer for commits made from Cursor or
+# when GIT_COMMIT_CURSOR_COAUTHOR=1 is set (e.g. agent shells without CURSOR_TRACE_ID).
+#
+# Enable for this clone: git config core.hooksPath .githooks
+# (yarn install runs "prepare", which sets this when possible.)
+
+COMMIT_MSG_FILE=$1
+COMMIT_SOURCE=${2:-}
+
+if [ "$COMMIT_SOURCE" = "merge" ]; then
+  exit 0
+fi
+
+if grep -qF "cursoragent@cursor.com" "$COMMIT_MSG_FILE" 2>/dev/null; then
+  exit 0
+fi
+
+cursorish=""
+if [ -n "${CURSOR_TRACE_ID:-}" ]; then
+  cursorish=1
+fi
+if [ "${GIT_COMMIT_CURSOR_COAUTHOR:-}" = "1" ]; then
+  cursorish=1
+fi
+
+if [ -z "$cursorish" ]; then
+  exit 0
+fi
+
+printf '\nCo-authored-by: Cursor <cursoragent@cursor.com>\n' >> "$COMMIT_MSG_FILE"
