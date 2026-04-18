@@ -5,5 +5,10 @@
     "openingCash": 0
   },
   "transfers": [],
-  "movements": []
+  "movements": [],
+  "scenario": {
+    "amount": 0,
+    "method": "bank",
+    "category": "food"
+  }
 }

@@ -34,6 +34,21 @@ export interface Movement {
   memo: string;
 }
 
+/** Hypothetical “what if” spend — persisted in state.json with Save. */
+export interface ScenarioInputs {
+  amount: number;
+  method: PaymentMethod;
+  category: Movement["category"];
+}
+
+export function defaultScenarioInputs(): ScenarioInputs {
+  return {
+    amount: 0,
+    method: "bank",
+    category: "food",
+  };
+}
+
 export interface AppState {
   meta: {
     currency: string;
@@ -42,6 +57,8 @@ export interface AppState {
   };
   transfers: Transfer[];
   movements: Movement[];
+  /** Estimation / scenario fields — part of your JSON backup. */
+  scenario?: ScenarioInputs;
 }
 
 export interface DerivedBalances {

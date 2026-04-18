@@ -17,6 +17,11 @@ const defaultState = {
   },
   transfers: [] as unknown[],
   movements: [] as unknown[],
+  scenario: {
+    amount: 0,
+    method: "bank",
+    category: "food",
+  },
 };
 
 const app = express();

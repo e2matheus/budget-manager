@@ -58,7 +58,7 @@ export function deriveBalances(state: AppState): DerivedBalances {
   };
 }
 
-/** Project balances after a hypothetical one-off expense (not persisted). */
+/** Project balances after a hypothetical one-off expense (inputs may live in `state.scenario` on disk). */
 export function projectAfterExpense(
   state: AppState,
   expense: {

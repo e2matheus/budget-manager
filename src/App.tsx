@@ -9,19 +9,29 @@ import {
 import "./App.css";
 import { fetchState, saveState } from "./api";
 import { deriveBalances, projectAfterExpense } from "./derive";
-import type {
-  Allocation,
-  AppState,
-  FoodSubcategory,
-  Movement,
-  Transfer,
+import {
+  defaultScenarioInputs,
+  type Allocation,
+  type AppState,
+  type FoodSubcategory,
+  type Movement,
+  type ScenarioInputs,
+  type Transfer,
 } from "./types";
 import { formatMoney, newId, parseNumber } from "./util";
+
+function normalizeState(raw: AppState): AppState {
+  return {
+    ...raw,
+    scenario: { ...defaultScenarioInputs(), ...raw.scenario },
+  };
+}
 
 const emptyState = (): AppState => ({
   meta: { currency: "EUR", openingBank: 0, openingCash: 0 },
   transfers: [],
   movements: [],
+  scenario: defaultScenarioInputs(),
 });
 
 export function App() {
@@ -36,7 +46,7 @@ export function App() {
       try {
         const s = await fetchState();
         if (!cancelled) {
-          setState(s);
+          setState(normalizeState(s));
           setLoadError(null);
         }
       } catch (e) {
@@ -159,7 +169,7 @@ export function App() {
 
           <MovementsTable state={state} setState={setState} />
 
-          <ScenarioPanel state={state} />
+          <ScenarioPanel state={state} setState={setState} />
         </div>
       </div>
     </div>
@@ -563,34 +573,51 @@ function MovementsTable({
   );
 }
 
-function ScenarioPanel({ state }: { state: AppState }) {
-  const [amount, setAmount] = useState("0");
-  const [method, setMethod] = useState<Movement["method"]>("bank");
-  const [category, setCategory] = useState<Movement["category"]>("food");
+function ScenarioPanel({
+  state,
+  setState,
+}: {
+  state: AppState;
+  setState: Dispatch<SetStateAction<AppState | null>>;
+}) {
+  const sc: ScenarioInputs = {
+    ...defaultScenarioInputs(),
+    ...state.scenario,
+  };
 
-  const amt = parseNumber(amount);
+  const patchScenario = (patch: Partial<ScenarioInputs>) => {
+    setState((s) =>
+      s
+        ? {
+            ...s,
+            scenario: { ...defaultScenarioInputs(), ...s.scenario, ...patch },
+          }
+        : s
+    );
+  };
+
   const projected = useMemo(
     () =>
       projectAfterExpense(state, {
-        amount: amt,
-        method,
-        category,
+        amount: sc.amount,
+        method: sc.method,
+        category: sc.category,
       }),
-    [state, amt, method, category]
+    [state, sc.amount, sc.method, sc.category]
   );
   const base = useMemo(() => deriveBalances(state), [state]);
 
   const taskRemaining =
-    category === "food"
+    sc.category === "food"
       ? projected.foodRemaining
-      : category === "utilities"
+      : sc.category === "utilities"
         ? projected.utilitiesRemaining
         : projected.generalRemaining;
 
   return (
     <div className="sheet-block">
       <div className="sheet-block-header">
-        Scenario (not saved) — if they spend this next
+        Scenario — if they spend this next (saved with your backup file)
       </div>
       <div className="scenario-grid">
         <div className="scenario-field">
@@ -598,17 +625,21 @@ function ScenarioPanel({ state }: { state: AppState }) {
           <input
             id="sc-amt"
             inputMode="decimal"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            value={String(sc.amount)}
+            onChange={(e) =>
+              patchScenario({ amount: parseNumber(e.target.value) })
+            }
           />
         </div>
         <div className="scenario-field">
           <label htmlFor="sc-method">Paid from</label>
           <select
             id="sc-method"
-            value={method}
+            value={sc.method}
             onChange={(e) =>
-              setMethod(e.target.value as Movement["method"])
+              patchScenario({
+                method: e.target.value as Movement["method"],
+              })
             }
           >
             <option value="bank">Bank</option>
@@ -619,9 +650,11 @@ function ScenarioPanel({ state }: { state: AppState }) {
           <label htmlFor="sc-cat">Counts against</label>
           <select
             id="sc-cat"
-            value={category}
+            value={sc.category}
             onChange={(e) =>
-              setCategory(e.target.value as Movement["category"])
+              patchScenario({
+                category: e.target.value as Movement["category"],
+              })
             }
           >
             <option value="food">Food / groceries</option>
