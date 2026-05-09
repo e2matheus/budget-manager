@@ -1,4 +1,4 @@
-import { type Dispatch, type SetStateAction } from "react";
+import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { sumFoodSpendForCycle } from "./derive";
 import { getLastRemainingForGroceryCycle } from "./ledgerOrder";
 import { MovementsLedgerTable } from "./MovementsLedger";
@@ -47,6 +47,29 @@ export function ScenariosPanel({
     });
   };
 
+  /** `false` = collapsed; missing key = expanded */
+  const [estimationOpen, setEstimationOpen] = useState<Record<string, boolean>>({});
+
+  const isEstimationOpen = (id: string) => estimationOpen[id] !== false;
+
+  const toggleEstimation = (id: string) => {
+    setEstimationOpen((prev) => {
+      const open = prev[id] !== false;
+      return { ...prev, [id]: !open };
+    });
+  };
+
+  const scenarioIds = useMemo(
+    () => state.scenarios.map((s) => s.id),
+    [state.scenarios]
+  );
+
+  const collapseAllEstimations = () => {
+    setEstimationOpen(Object.fromEntries(scenarioIds.map((id) => [id, false])));
+  };
+
+  const expandAllEstimations = () => setEstimationOpen({});
+
   const currency = state.meta.currency;
 
   return (
@@ -57,6 +80,15 @@ export function ScenariosPanel({
         made an estimation, then shows the same <strong>Movements</strong> layout filtered
         to that task (edits apply to the global ledger).
       </p>
+      <div className="scenario-toolbar">
+        <span className="scenario-toolbar-label">Estimation snapshots</span>
+        <button type="button" className="btn" onClick={collapseAllEstimations}>
+          Collapse all
+        </button>
+        <button type="button" className="btn" onClick={expandAllEstimations}>
+          Expand all
+        </button>
+      </div>
       <div className="scenario-stack">
         {state.scenarios.map((sc) => {
           const es = sc.estimationSnapshot ?? {};
@@ -103,91 +135,105 @@ export function ScenariosPanel({
               </div>
 
               <div className="scenario-estimation">
-                <div className="scenario-estimation-title">
-                  Snapshot — state when you made this estimation
-                </div>
-                <p className="muted scenario-estimation-hint">
-                  e.g. he had 17,30 on his bank, 21,55 cash; you had two 1 € coins and 40,00
-                  in bills.
-                </p>
-                <div className="scenario-estimation-grid">
-                  <label htmlFor={`es-bank-${sc.id}`}>His bank</label>
-                  <input
-                    id={`es-bank-${sc.id}`}
-                    inputMode="decimal"
-                    className="scenario-excel-input"
-                    value={
-                      es.hisBank != null && Number.isFinite(es.hisBank)
-                        ? formatAmountField(es.hisBank)
-                        : ""
-                    }
-                    onChange={(e) => {
-                      const raw = e.target.value.trim();
-                      mergeEs({ hisBank: raw === "" ? undefined : parseNumber(raw) });
-                    }}
-                  />
-                  <label htmlFor={`es-hcash-${sc.id}`}>His cash</label>
-                  <input
-                    id={`es-hcash-${sc.id}`}
-                    inputMode="decimal"
-                    className="scenario-excel-input"
-                    value={
-                      es.hisCash != null && Number.isFinite(es.hisCash)
-                        ? formatAmountField(es.hisCash)
-                        : ""
-                    }
-                    onChange={(e) => {
-                      const raw = e.target.value.trim();
-                      mergeEs({ hisCash: raw === "" ? undefined : parseNumber(raw) });
-                    }}
-                  />
-                  <label htmlFor={`es-1e-${sc.id}`}>My 1,00 € coins (count)</label>
-                  <input
-                    id={`es-1e-${sc.id}`}
-                    inputMode="numeric"
-                    value={
-                      es.myOneEuroCoinCount != null
-                        ? String(es.myOneEuroCoinCount)
-                        : ""
-                    }
-                    onChange={(e) => {
-                      const raw = e.target.value.trim();
-                      mergeEs({
-                        myOneEuroCoinCount:
-                          raw === "" ? undefined : Math.max(0, parseInt(raw, 10) || 0),
-                      });
-                    }}
-                  />
-                  <label htmlFor={`es-bills-${sc.id}`}>My bills (EUR)</label>
-                  <input
-                    id={`es-bills-${sc.id}`}
-                    inputMode="decimal"
-                    className="scenario-excel-input"
-                    value={
-                      es.myCashBills != null && Number.isFinite(es.myCashBills)
-                        ? formatAmountField(es.myCashBills)
-                        : ""
-                    }
-                    onChange={(e) => {
-                      const raw = e.target.value.trim();
-                      mergeEs({
-                        myCashBills: raw === "" ? undefined : parseNumber(raw),
-                      });
-                    }}
-                  />
-                </div>
-                <label htmlFor={`es-note-${sc.id}`} className="muted">
-                  Note
-                </label>
-                <textarea
-                  id={`es-note-${sc.id}`}
-                  className="scenario-notes"
-                  rows={2}
-                  value={es.note ?? ""}
-                  onChange={(e) =>
-                    mergeEs({ note: e.target.value || undefined })
-                  }
-                />
+                <button
+                  type="button"
+                  className="scenario-estimation-toggle"
+                  onClick={() => toggleEstimation(sc.id)}
+                  aria-expanded={isEstimationOpen(sc.id)}
+                >
+                  <span className="scenario-estimation-chevron" aria-hidden>
+                    {isEstimationOpen(sc.id) ? "▼" : "▶"}
+                  </span>
+                  <span className="scenario-estimation-title">
+                    Snapshot — state when you made this estimation
+                  </span>
+                </button>
+                {isEstimationOpen(sc.id) ? (
+                  <>
+                    <p className="muted scenario-estimation-hint">
+                      e.g. he had 17,30 on his bank, 21,55 cash; you had two 1 € coins and
+                      40,00 in bills.
+                    </p>
+                    <div className="scenario-estimation-grid">
+                      <label htmlFor={`es-bank-${sc.id}`}>His bank</label>
+                      <input
+                        id={`es-bank-${sc.id}`}
+                        inputMode="decimal"
+                        className="scenario-excel-input"
+                        value={
+                          es.hisBank != null && Number.isFinite(es.hisBank)
+                            ? formatAmountField(es.hisBank)
+                            : ""
+                        }
+                        onChange={(e) => {
+                          const raw = e.target.value.trim();
+                          mergeEs({ hisBank: raw === "" ? undefined : parseNumber(raw) });
+                        }}
+                      />
+                      <label htmlFor={`es-hcash-${sc.id}`}>His cash</label>
+                      <input
+                        id={`es-hcash-${sc.id}`}
+                        inputMode="decimal"
+                        className="scenario-excel-input"
+                        value={
+                          es.hisCash != null && Number.isFinite(es.hisCash)
+                            ? formatAmountField(es.hisCash)
+                            : ""
+                        }
+                        onChange={(e) => {
+                          const raw = e.target.value.trim();
+                          mergeEs({ hisCash: raw === "" ? undefined : parseNumber(raw) });
+                        }}
+                      />
+                      <label htmlFor={`es-1e-${sc.id}`}>My 1,00 € coins (count)</label>
+                      <input
+                        id={`es-1e-${sc.id}`}
+                        inputMode="numeric"
+                        value={
+                          es.myOneEuroCoinCount != null
+                            ? String(es.myOneEuroCoinCount)
+                            : ""
+                        }
+                        onChange={(e) => {
+                          const raw = e.target.value.trim();
+                          mergeEs({
+                            myOneEuroCoinCount:
+                              raw === "" ? undefined : Math.max(0, parseInt(raw, 10) || 0),
+                          });
+                        }}
+                      />
+                      <label htmlFor={`es-bills-${sc.id}`}>My bills (EUR)</label>
+                      <input
+                        id={`es-bills-${sc.id}`}
+                        inputMode="decimal"
+                        className="scenario-excel-input"
+                        value={
+                          es.myCashBills != null && Number.isFinite(es.myCashBills)
+                            ? formatAmountField(es.myCashBills)
+                            : ""
+                        }
+                        onChange={(e) => {
+                          const raw = e.target.value.trim();
+                          mergeEs({
+                            myCashBills: raw === "" ? undefined : parseNumber(raw),
+                          });
+                        }}
+                      />
+                    </div>
+                    <label htmlFor={`es-note-${sc.id}`} className="muted">
+                      Note
+                    </label>
+                    <textarea
+                      id={`es-note-${sc.id}`}
+                      className="scenario-notes"
+                      rows={2}
+                      value={es.note ?? ""}
+                      onChange={(e) =>
+                        mergeEs({ note: e.target.value || undefined })
+                      }
+                    />
+                  </>
+                ) : null}
               </div>
 
               <div className="scenario-scope-row">

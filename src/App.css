@@ -324,6 +324,23 @@
   margin-top: 0.5rem;
 }
 
+.scenario-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.5rem 0.55rem;
+  border-bottom: 1px solid #d4d4e8;
+  margin-bottom: 0.35rem;
+}
+
+.scenario-toolbar-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #3a3a52;
+  margin-right: 0.15rem;
+}
+
 .scenario-estimation {
   padding: 0.45rem 0.5rem;
   margin-bottom: 0.45rem;
@@ -332,10 +349,36 @@
   border-radius: 4px;
 }
 
+.scenario-estimation-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.1rem 0;
+  margin: 0 0 0.2rem;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.scenario-estimation-toggle:hover .scenario-estimation-title {
+  text-decoration: underline;
+}
+
+.scenario-estimation-chevron {
+  flex-shrink: 0;
+  width: 1rem;
+  font-size: 0.68rem;
+  opacity: 0.75;
+  line-height: 1.5;
+}
+
 .scenario-estimation-title {
   font-size: 0.82rem;
   font-weight: 600;
-  margin-bottom: 0.25rem;
 }
 
 .scenario-estimation-hint {
