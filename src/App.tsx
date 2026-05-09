@@ -6,6 +6,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
+import { navigateToRoute, useAppRoute } from "./useAppRoute";
 import "./App.css";
 import { fetchState, saveState } from "./api";
 import {
@@ -173,7 +174,7 @@ export function App() {
       <div className="app-shell">
         <div className="sheet-window">
           <div className="sheet-titlebar">
-            <span>Budget Manager</span>
+            <span className="sheet-titlebar-brand">Budget Manager</span>
           </div>
           <div className="sheet-body">
             <p className="muted">Loading…</p>
@@ -189,10 +190,60 @@ export function App() {
   }
 
   return (
+    <AppChrome
+      state={state}
+      derived={derived}
+      setState={setState}
+      loadError={loadError}
+      saveStatus={saveStatus}
+      saving={saving}
+      onSave={onSave}
+    />
+  );
+}
+
+function AppChrome({
+  state,
+  derived,
+  setState,
+  loadError,
+  saveStatus,
+  saving,
+  onSave,
+}: {
+  state: AppState;
+  derived: NonNullable<ReturnType<typeof deriveBalances>>;
+  setState: Dispatch<SetStateAction<AppState | null>>;
+  loadError: string | null;
+  saveStatus: string;
+  saving: boolean;
+  onSave: () => void;
+}) {
+  const route = useAppRoute();
+
+  return (
     <div className="app-shell">
       <div className="sheet-window">
         <div className="sheet-titlebar">
-          <span>Budget Manager</span>
+          <div className="sheet-titlebar-left">
+            <span className="sheet-titlebar-brand">Budget Manager</span>
+            <nav className="sheet-titlebar-nav" aria-label="Main pages">
+              <button
+                type="button"
+                className={`titlebar-nav-btn${route === "ledger" ? " is-active" : ""}`}
+                onClick={() => navigateToRoute("ledger")}
+              >
+                Ledger
+              </button>
+              <button
+                type="button"
+                className={`titlebar-nav-btn${route === "scenarios" ? " is-active" : ""}`}
+                onClick={() => navigateToRoute("scenarios")}
+              >
+                Scenarios
+              </button>
+            </nav>
+          </div>
           <div className="sheet-titlebar-actions">
             <span
               className={
@@ -215,51 +266,55 @@ export function App() {
         </div>
 
         <div className="sheet-body">
-          <MetaSection state={state} setState={setState} />
+          {route === "ledger" ? (
+            <>
+              <MetaSection state={state} setState={setState} />
 
-          <div className="sheet-block">
-            <div className="sheet-block-header">Balances &amp; allocation remainder</div>
-            <div className="summary-grid">
-              <div className="summary-card">
-                <div className="label">Bank (account)</div>
-                <div className="value">
-                  {formatMoney(derived.bank, state.meta.currency)}
+              <div className="sheet-block">
+                <div className="sheet-block-header">Balances &amp; allocation remainder</div>
+                <div className="summary-grid">
+                  <div className="summary-card">
+                    <div className="label">Bank (account)</div>
+                    <div className="value">
+                      {formatMoney(derived.bank, state.meta.currency)}
+                    </div>
+                  </div>
+                  <div className="summary-card">
+                    <div className="label">Cash</div>
+                    <div className="value">
+                      {formatMoney(derived.cash, state.meta.currency)}
+                    </div>
+                  </div>
+                  <div className="summary-card">
+                    <div className="label">Food / groceries (remaining)</div>
+                    <div className="value">
+                      {formatMoney(derived.foodRemaining, state.meta.currency)}
+                    </div>
+                  </div>
+                  <div className="summary-card">
+                    <div className="label">Utilities / services (remaining)</div>
+                    <div className="value">
+                      {formatMoney(derived.utilitiesRemaining, state.meta.currency)}
+                    </div>
+                  </div>
+                  <div className="summary-card">
+                    <div className="label">General / other (remaining)</div>
+                    <div className="value">
+                      {formatMoney(derived.generalRemaining, state.meta.currency)}
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div className="summary-card">
-                <div className="label">Cash</div>
-                <div className="value">
-                  {formatMoney(derived.cash, state.meta.currency)}
-                </div>
-              </div>
-              <div className="summary-card">
-                <div className="label">Food / groceries (remaining)</div>
-                <div className="value">
-                  {formatMoney(derived.foodRemaining, state.meta.currency)}
-                </div>
-              </div>
-              <div className="summary-card">
-                <div className="label">Utilities / services (remaining)</div>
-                <div className="value">
-                  {formatMoney(derived.utilitiesRemaining, state.meta.currency)}
-                </div>
-              </div>
-              <div className="summary-card">
-                <div className="label">General / other (remaining)</div>
-                <div className="value">
-                  {formatMoney(derived.generalRemaining, state.meta.currency)}
-                </div>
-              </div>
-            </div>
-          </div>
 
-          <GroceryCyclesSection state={state} setState={setState} />
+              <GroceryCyclesSection state={state} setState={setState} />
 
-          <TasksSection state={state} setState={setState} />
+              <TasksSection state={state} setState={setState} />
 
-          <MovementsLedgerTable state={state} setState={setState} />
-
-          <ScenariosPanel state={state} setState={setState} />
+              <MovementsLedgerTable state={state} setState={setState} />
+            </>
+          ) : (
+            <ScenariosPanel state={state} setState={setState} />
+          )}
         </div>
       </div>
     </div>
