@@ -11,3 +11,4 @@ dist-server
 
 # Sensitive local budget data — create from state.example.json after clone
 data/state.json
+data/*.csv
